@@ -1,12 +1,4 @@
 # 🌬️ at-mos
-
-> **/ˈätˌmōs/** — Del latín *atmosphaera*, "esfera de vapor".  
-> El aire que envuelve un proyecto. Su identidad visual. Su atmósfera.
->
-> También: **A**tomated **T**ailwind **M**anifest **O**ptimization **S**ystem.  
-> También: un juego de palabras con `@theme`.  
-> Usa el que más te guste.
-
 ---
 
 ## ¿Qué es at-mos?
