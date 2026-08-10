@@ -1,6 +1,7 @@
 import { readFile } from 'fs/promises'
 import { extname } from 'path'
 import type { ThemeVariable } from './writer.js'
+import { AtMosError } from '../utils/errors.js'
 
 // ──────────────────────────────────────────────
 // Tipos que puede tener un valor en tokens.json
@@ -27,6 +28,50 @@ export async function parseFromFile(filePath: string): Promise<ThemeVariable[]> 
   if (ext === '.css') return parseCss(filePath)
 
   throw new Error(`Formato no soportado: ${ext}. Usa .json o .css`)
+}
+
+/**
+ * Igual que parseFromFile pero con errores estructurados (AtMosError)
+ * para que un agente pueda distinguir el origen del fallo.
+ */
+export async function parseTokensFromFile(filePath: string): Promise<ThemeVariable[]> {
+  try {
+    return await parseFromFile(filePath)
+  } catch (err) {
+    if (err instanceof AtMosError) throw err
+
+    const msg = err instanceof Error ? err.message : String(err)
+
+    if (err instanceof SyntaxError) {
+      throw new AtMosError(
+        'INPUT_PARSE_FAILED',
+        `El archivo ${filePath} no es JSON válido.`,
+        'Revisa la sintaxis del JSON y vuelve a intentarlo.'
+      )
+    }
+
+    if (msg.includes('Formato no soportado')) {
+      throw new AtMosError(
+        'INPUT_UNSUPPORTED_FORMAT',
+        msg,
+        'Usa archivos .json o .css.'
+      )
+    }
+
+    if ((err as NodeJS.ErrnoException)?.code === 'ENOENT' || msg.includes('ENOENT')) {
+      throw new AtMosError(
+        'INPUT_FILE_NOT_FOUND',
+        `No se pudo leer el archivo: ${filePath}`,
+        'Verifica la ruta. Puedes correr "at-mos env --json" para ver el directorio de trabajo.'
+      )
+    }
+
+    throw new AtMosError(
+      'INPUT_PARSE_FAILED',
+      `No se pudo parsear ${filePath}: ${msg}`,
+      'Revisa el contenido del archivo.'
+    )
+  }
 }
 
 // ──────────────────────────────────────────────
@@ -84,7 +129,9 @@ function flattenTokens(
       }
 
       // Style Dictionary: { value: "...", type: "..." }
-      if ('value' in objValue && !isPlainNs(objValue)) {
+      // `value`/`$value` marca un token, aunque tenga metadata extra
+      // (deprecated, description, comment, etc.)
+      if ('value' in objValue) {
         const resolved = resolveValue(objValue.value, joinedKey)
         if (resolved) result.push(...resolved)
         continue
@@ -101,23 +148,6 @@ function flattenTokens(
   }
 
   return result
-}
-
-/**
- * Determina si un objeto es un "namespace" (tiene varias keys hijas
- * sin que ninguna sea `value`/`$value` explícito).
- */
-function isPlainNs(obj: Record<string, unknown>): boolean {
-  const keys = Object.keys(obj)
-  if (keys.length === 0) return true
-
-  // Si además de `value` tiene otras keys hijas sustantivas, es namespace.
-  // Sólo si tiene exclusivamente `value` (y opcionalmente `type`/`description`) es Style Dictionary.
-  const metaKeys = new Set(['value', 'type', '$value', '$type', 'description', '$description'])
-  const hasExplicitValue = 'value' in obj || '$value' in obj
-  const hasNonMetaKeys = keys.some(k => !metaKeys.has(k))
-
-  return !(hasExplicitValue && !hasNonMetaKeys)
 }
 
 /**

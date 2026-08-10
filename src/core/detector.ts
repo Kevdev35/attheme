@@ -2,6 +2,7 @@ import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { readdirSync } from 'fs'
 import { join } from 'path'
+import { AtMosError } from '../utils/errors.js'
 
 export type PackageManager = 'npm' | 'pnpm' | 'bun' | 'yarn'
 export type Framework = 'nextjs' | 'sveltekit' | 'astro' | 'vue' | 'unknown'
@@ -30,14 +31,29 @@ function detectPackageManager(): PackageManager {
   return 'npm'
 }
 
-async function detectFramework(): Promise<Framework> {
-  if (!existsSync('package.json')) return 'unknown'
+async function readPackageJson(): Promise<Record<string, unknown>> {
+  if (!existsSync('package.json')) return {}
+  try {
+    return JSON.parse(await readFile('package.json', 'utf-8'))
+  } catch (err) {
+    if (err instanceof SyntaxError) {
+      throw new AtMosError(
+        'ENV_PACKAGE_JSON_INVALID',
+        'package.json no es JSON válido.',
+        'Revisa la sintaxis de package.json antes de continuar.'
+      )
+    }
+    throw err
+  }
+}
 
-  const raw = await readFile('package.json', 'utf-8')
-  const pkg = JSON.parse(raw)
+async function detectFramework(): Promise<Framework> {
+  const pkg = await readPackageJson()
+  if (Object.keys(pkg).length === 0) return 'unknown'
+
   const deps = {
-    ...pkg.dependencies,
-    ...pkg.devDependencies
+    ...(pkg.dependencies ?? {}),
+    ...(pkg.devDependencies ?? {})
   }
 
   if (deps['next']) return 'nextjs'
@@ -48,16 +64,15 @@ async function detectFramework(): Promise<Framework> {
 }
 
 async function detectTailwind(): Promise<TailwindVersion> {
-  if (!existsSync('package.json')) return 'not-installed'
+  const pkg = await readPackageJson()
+  if (Object.keys(pkg).length === 0) return 'not-installed'
 
-  const raw = await readFile('package.json', 'utf-8')
-  const pkg = JSON.parse(raw)
   const deps = {
-    ...pkg.dependencies,
-    ...pkg.devDependencies
+    ...(pkg.dependencies ?? {}),
+    ...(pkg.devDependencies ?? {})
   }
 
-  const version: string | undefined = deps['tailwindcss']
+  const version: string | undefined = deps['tailwindcss'] as string | undefined
   if (!version) return 'not-installed'
   if (version.startsWith('4') || version.startsWith('^4')) return '4'
   return '3'

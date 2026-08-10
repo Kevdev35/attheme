@@ -1,37 +1,127 @@
 import * as p from '@clack/prompts'
 import { detectEnv } from '../core/detector.js'
 import { askOutputPath } from '../core/prompts.js'
-import { readTheme } from '../core/reader.js'
+import { readThemeSafe } from '../core/reader.js'
 import { writeTheme } from '../core/writer.js'
-import { logger } from '../utils/logger.js'
+import { logger, intro, outro, outputJson, fail, isTTY } from '../utils/logger.js'
+import { AtMosError } from '../utils/errors.js'
 import type { ThemeVariable } from '../core/writer.js'
 
 interface UpdateOptions {
   output?: string
+  yes?: boolean
+  json?: boolean
+  add?: boolean
+  edit?: boolean
+  delete?: boolean
+  name?: string
+  names?: string[]
+  value?: string
 }
 
 type UpdateAction = 'add' | 'edit' | 'delete'
 
 export async function update(options: UpdateOptions) {
-  p.intro('at-mos — actualizar @theme')
+  const headless = options.yes || options.json || !isTTY
 
-  const spinner = p.spinner()
-  spinner.start('Buscando archivo CSS...')
+  intro('at-mos — actualizar @theme')
+
   const env = await detectEnv()
-  spinner.stop('Proyecto analizado')
 
   let cssPath = options.output ?? env.cssCandidate
 
   if (!cssPath) {
+    if (headless) {
+      fail(new AtMosError(
+        'ENV_NO_CSS_CANDIDATE',
+        'No se encontró un archivo CSS.',
+        'Usa --output <ruta> para indicar el archivo, o crea el CSS primero con at-mos init.'
+      ))
+    }
     logger.warn('No se encontró un archivo CSS automáticamente.')
     cssPath = await askOutputPath()
   }
 
   // leer variables actuales
-  spinner.start(`Leyendo variables desde ${cssPath}...`)
-  const variables = await readTheme(cssPath)
-  spinner.stop(`${variables.length} variables encontradas`)
+  let variables: ThemeVariable[]
+  try {
+    variables = await readThemeSafe(cssPath)
+  } catch (err) {
+    if (err instanceof AtMosError) fail(err)
+    throw err
+  }
 
+  // ── Modo no-interactivo (IAs / CI) ──
+  if (headless) {
+    let updated: ThemeVariable[]
+    let action: UpdateAction
+
+    if (options.add) {
+      action = 'add'
+      if (!options.name || !options.value) {
+        fail(new AtMosError(
+          'USAGE_MISSING_ARGUMENT',
+          '--add requiere --name <nombre> y --value <valor>.',
+          'Ej: at-mos update --add --name --color-x --value "#f00" --json'
+        ))
+      }
+      if (variables.some(v => v.name === options.name)) {
+        fail(new AtMosError(
+          'INPUT_DUPLICATE_VARIABLE',
+          `La variable ya existe: ${options.name}`,
+          'Usa --edit para modificarla o elige otro nombre.'
+        ))
+      }
+      updated = [...variables, { name: options.name!, value: options.value! }]
+    } else if (options.edit) {
+      action = 'edit'
+      if (!options.name || !options.value) {
+        fail(new AtMosError(
+          'USAGE_MISSING_ARGUMENT',
+          '--edit requiere --name <nombre> y --value <valor>.',
+          'Ej: at-mos update --edit --name --color-primary --value "#4f46e5" --json'
+        ))
+      }
+      if (!variables.some(v => v.name === options.name)) {
+        fail(new AtMosError(
+          'INPUT_VARIABLE_NOT_FOUND',
+          `La variable no existe: ${options.name}`,
+          'Corre "at-mos list --json" para ver las variables disponibles.'
+        ))
+      }
+      updated = variables.map(v =>
+        v.name === options.name ? { ...v, value: options.value! } : v
+      )
+    } else if (options.delete) {
+      action = 'delete'
+      const names = options.names ?? []
+      if (names.length === 0) {
+        fail(new AtMosError(
+          'USAGE_MISSING_ARGUMENT',
+          '--delete requiere --names <nombre> (repetible).',
+          'Ej: at-mos update --delete --names --color-x --names --color-y --json'
+        ))
+      }
+      updated = variables.filter(v => !names.includes(v.name))
+    } else {
+      fail(new AtMosError(
+        'USAGE_MISSING_ACTION',
+        'Modo no-interactivo requiere --add, --edit o --delete.',
+        'Ej: at-mos update --edit --name --color-primary --value "#4f46e5" --json'
+      ))
+    }
+
+    await writeTheme(cssPath, updated)
+
+    if (options.json) {
+      outputJson({ ok: true, command: 'update', action, output: cssPath, variables: updated.length })
+    } else {
+      logger.success(`@theme actualizado en ${cssPath} (${updated.length} variables)`)
+    }
+    return
+  }
+
+  // ── Modo interactivo ──
   if (variables.length > 0) {
     p.log.step('Variables actuales:')
     for (const { name, value } of variables) {
@@ -58,26 +148,27 @@ export async function update(options: UpdateOptions) {
   } else if (action === 'edit') {
     if (variables.length === 0) {
       logger.warn('No hay variables para modificar.')
-      p.outro('Sin cambios.')
+      outro('Sin cambios.')
       return
     }
     updated = await handleEdit(variables)
   } else if (action === 'delete') {
     if (variables.length === 0) {
       logger.warn('No hay variables para eliminar.')
-      p.outro('Sin cambios.')
+      outro('Sin cambios.')
       return
     }
     updated = await handleDelete(variables)
   }
 
   // escribir cambios
+  const spinner = p.spinner()
   spinner.start('Guardando cambios...')
   await writeTheme(cssPath, updated)
   spinner.stop('Listo')
 
   logger.success(`@theme actualizado en ${cssPath}`)
-  p.outro('Cambios guardados.')
+  outro('Cambios guardados.')
 }
 
 async function handleAdd(variables: ThemeVariable[]): Promise<ThemeVariable[]> {

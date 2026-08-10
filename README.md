@@ -181,8 +181,8 @@ at-mos está en **v1.2** y recién está despegando.
 
 ### Ahora (v1.5 — Core mejorado)
 - ✅ Parser de tokens anidados, Style Dictionary y W3C
+- ✅ Modo non-interactive para CI/CD y agentes de IA
 - ⬜ Más frameworks detectados (Nuxt, Remix, Solid, Laravel…)
-- ⬜ Modo non-interactive para CI/CD
 - ⬜ Preview y diff del CSS antes de escribir
 
 ### Siguiente (v2.0 — IA)
@@ -226,6 +226,45 @@ at-mos init --from tokens.json --output src/app.css
 ```
 
 > **Requiere Node.js 18+**
+
+---
+
+## 🤖 Modo IA / Headless
+
+at-mos está diseñado para que **tanto humanos como agentes de IA** (OpenCode, Claude Code, Cursor, etc.) lo usen. En headless, todos los comandos son deterministas, no preguntan nada y responden JSON.
+
+```bash
+# El agente descubre el contrato él mismo
+at-mos ai              # guía en texto (humano)
+at-mos ai --json       # contrato estructurado (agente)
+
+# Dejar instrucciones en el proyecto para cualquier agente de IA
+at-mos agent           # crea/actualiza AGENTS.md en la raíz del proyecto
+
+# Flujo típico de un agente
+at-mos env --json                                        # 1. reconoce el proyecto
+at-mos init --from tokens.json --output src/app/globals.css --yes --json   # 2. genera el @theme
+at-mos list --json                                       # 3. verifica
+at-mos update --edit --name --color-primary --value "#4f46e5" --json       # 4. itera
+at-mos update --delete --names --color-spacing-xs --json
+```
+
+> `init` te pregunta si querés dejar instrucciones para agentes en `AGENTS.md`
+> (en modo headless `--yes` lo agrega automáticamente). Si el archivo ya existe,
+> hace backup (`AGENTS.md.bak`) y **agrega el bloque al final sin tocar tu
+> contenido**. `--no-agent` lo omite, y `at-mos agent` lo hace cuando quieras.
+
+### Contrato para agentes
+
+- **Activación**: stdin no-TTY, `--yes` o `--json` activan headless automáticamente.
+- **Streams**: `stdout` = solo datos (JSON). `stderr` = mensajes humanos. Usa `2>/dev/null` para parsear limpio.
+- **Exit codes**: `0` = éxito, `1` = error.
+- **Respuestas**: `{"ok":true,...}` en éxito, `{"ok":false,"error":{"code","message","hint","category"}}` en error.
+- **Errores con categoría** (para saber si fue culpa del agente o de la herramienta):
+  - `caller` → la invocación/datos fueron incorrectos (flag faltante, archivo inexistente, variable duplicada). Corrige y reintenta.
+  - `environment` → estado del proyecto (sin CSS candidato, package.json inválido). Adaptate.
+  - `tool` → bug interno de at-mos. **No reintentes**; reporta con el `stack` incluido.
+- **Quoting**: los valores que empiezan con `-` o `#` citarse con comillas (ej. `--value "#f00"`).
 
 ---
 

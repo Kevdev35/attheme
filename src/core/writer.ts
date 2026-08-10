@@ -1,6 +1,7 @@
 import { existsSync } from 'fs'
 import { copyFile, writeFile, mkdir } from 'fs/promises'
 import { dirname } from 'path'
+import { AtMosError } from '../utils/errors.js'
 
 export interface ThemeVariable {
   name: string
@@ -11,10 +12,19 @@ export async function writeTheme(
   outputPath: string,
   variables: ThemeVariable[]
 ): Promise<void> {
-  await ensureDir(outputPath)
-  await backup(outputPath)
-  const css = generateCss(variables)
-  await writeFile(outputPath, css, 'utf-8')
+  try {
+    await ensureDir(outputPath)
+    await backup(outputPath)
+    const css = generateCss(variables)
+    await writeFile(outputPath, css, 'utf-8')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new AtMosError(
+      'TOOL_WRITE_FAILED',
+      `No se pudo escribir el archivo: ${outputPath} — ${msg}`,
+      'Verifica los permisos de escritura del directorio.'
+    )
+  }
 }
 
 async function ensureDir(filePath: string): Promise<void> {
